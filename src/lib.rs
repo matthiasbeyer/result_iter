@@ -99,6 +99,12 @@ pub trait ResultIterExt<T, E>: Sized + Iterator<Item = Result<T, E>> {
     fn end_if_err(self) -> EndIfErrIter<T, E, Self>;
     fn fail_slow_if_err(self) -> Result<vec::IntoIter<T>, MultiError<E>>;
 
+    /// Call a function on each `Err(_)` in the iterator, but do not alter the error element in any
+    /// way.
+    ///
+    /// This is intended for sideeffect-only operations on errors, such as printing to stderr.
+    fn on_err<F: Fn(&E)>(self, f: F) -> OnErr<Self, F>;
+
     fn fail_fast_if_err(self) -> Result<vec::IntoIter<T>, E> {
         self.end_if_err().fail_slow_if_err()
             .map_err(|e| e.into_iter().next().expect(""))
@@ -139,6 +145,34 @@ impl<T, E, I> ResultIterExt<T, E> for I
         } else {
             Err(MultiError::new(baddies))
         }
+    }
+
+    fn on_err<F: Fn(&E)>(self, f: F) -> OnErr<Self, F> {
+        OnErr(self, f)
+    }
+}
+
+#[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
+#[derive(Clone)]
+pub struct OnErr<I, F>(I, F);
+
+impl<I, F, T, E> Iterator for OnErr<I, F> where
+    I: Iterator<Item = Result<T, E>>,
+    F: Fn(&E)
+{
+    type Item = Result<T, E>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|r| r.map_err(|e| { (self.1)(&e); e }))
+    }
+}
+
+impl<I, F, T, E> DoubleEndedIterator for OnErr<I, F> where
+    I: DoubleEndedIterator<Item = Result<T, E>>,
+    F: Fn(&E)
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back().map(|r| r.map_err(|e| { (self.1)(&e); e }))
     }
 }
 
